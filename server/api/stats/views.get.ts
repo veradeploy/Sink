@@ -1,30 +1,49 @@
-import type { H3Event } from 'h3'
-import { QuerySchema } from '@@/schemas/query'
+import { eventHandler, type H3Event } from 'h3'
 import { z } from 'zod'
+import sqlbricks from 'sql-bricks'
 
-const { select } = SqlBricks
+import { QuerySchema } from '@@/schemas/query'
+/// import { query2filter, appendTimeFilter, useWAE, getValidatedQuery } from '@/server/utils/...'
+import { logsMap } from '@/server/utils/logsMap'
 
-const unitMap: { [x: string]: string } = {
-  minute: '%H:%M',
-  hour: '%Y-%m-%d %H',
-  day: '%Y-%m-%d',
+const { select } = sqlbricks
+
+const ViewsQuery = QuerySchema.extend({
+  unit: z.enum(['minute','hour','day']),
+  clientTimezone: z.string().optional()
+})
+type VQ = z.infer<typeof ViewsQuery>
+
+function bucketExpr(unit: VQ['unit'], tz?: string) {
+  const ts = tz ? `toTimeZone(timestamp, '${tz}')` : 'timestamp'
+  switch (unit) {
+    case 'minute': return `toUnixTimestamp(toStartOfMinute(${ts}))`
+    case 'hour':   return `toUnixTimestamp(toStartOfHour(${ts}))`
+    case 'day':    return `toUnixTimestamp(toStartOfDay(${ts}))`
+  }
 }
 
-const ViewsQuerySchema = QuerySchema.extend({
-  unit: z.string(),
-  clientTimezone: z.string().default('Etc/UTC'),
-})
-
-function query2sql(query: z.infer<typeof ViewsQuerySchema>, event: H3Event): string {
+function query2sql(query: VQ, _event: H3Event): string {
   const filter = query2filter(query)
-  const { dataset } = 'sink'
-  const sql = select(`formatDateTime(timestamp, '${unitMap[query.unit]}', '${query.clientTimezone}') as time, SUM(_sample_interval) as visits, COUNT(DISTINCT ${logsMap.ip}) as visitors`).from(dataset).where(filter).groupBy('time').orderBy('time')
-  appendTimeFilter(sql, query)
-  return sql.toString()
+  const table = logsMap.table
+  const tExpr = bucketExpr(query.unit, query.clientTimezone)
+
+  const qb = select([
+      `${tExpr} AS t`,
+      `SUM(${logsMap.sampleInterval}) AS y`
+    ].join(', '))
+    .from(table)
+    .where(filter)
+    .groupBy('t')
+    .orderBy('t ASC')
+
+  appendTimeFilter(qb, query)
+  return qb.toString()
 }
 
 export default eventHandler(async (event) => {
-  const query = await getValidatedQuery(event, ViewsQuerySchema.parse)
+  const query = await getValidatedQuery(event, ViewsQuery.parse)
   const sql = query2sql(query, event)
-  return useWAE(event, sql)
+  const { data } = await useWAE(event, sql)
+  return { unit: query.unit, rows: data }
 })
