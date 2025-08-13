@@ -1,25 +1,50 @@
-import type { H3Event } from 'h3'
-import { QuerySchema } from '@@/schemas/query'
+import { eventHandler, type H3Event } from 'h3'
 import { z } from 'zod'
+import sqlbricks from 'sql-bricks'
 
-const { select } = SqlBricks
+import { QuerySchema } from '@@/schemas/query'
+/// import { query2filter, appendTimeFilter, useWAE, getValidatedQuery } from '@/server/utils/...'
+import { logsMap } from '@/server/utils/logsMap'
 
-const MetricsQuerySchema = QuerySchema.extend({
-  type: z.string(),
+const { select } = sqlbricks
+
+const MetricQuery = QuerySchema.extend({
+  type: z.enum(['referer','device','language','country','os'])
 })
+type MetricQ = z.infer<typeof MetricQuery>
 
-function query2sql(query: z.infer<typeof MetricsQuerySchema>, event: H3Event): string {
+function colFor(type: MetricQ['type']): string {
+  switch (type) {
+    case 'referer':  return logsMap.referer
+    case 'language': return logsMap.language
+    case 'country':  return logsMap.country
+    case 'os':       return logsMap.os
+    case 'device':   // you don't have a clean "device" column; use browser as a proxy
+      return logsMap.browser
+  }
+}
+
+function query2sql(query: MetricQ, _event: H3Event): string {
   const filter = query2filter(query)
-  const { dataset } = 'sink'
+  const table = logsMap.table
+  const col = colFor(query.type)
 
-  // @ts-expect-error todo
-  const sql = select(`${logsMap[query.type]} as name, SUM(_sample_interval) as count`).from(dataset).where(filter).groupBy('name').orderBy('count DESC').limit(query.limit)
-  appendTimeFilter(sql, query)
-  return sql.toString()
+  const qb = select([
+      `${col} AS value`,
+      `SUM(${logsMap.sampleInterval}) AS count`
+    ].join(', '))
+    .from(table)
+    .where(filter)
+    .groupBy('value')
+    .orderBy('count DESC')
+
+  appendTimeFilter(qb, query)
+  return qb.toString()
 }
 
 export default eventHandler(async (event) => {
-  const query = await getValidatedQuery(event, MetricsQuerySchema.parse)
+  const query = await getValidatedQuery(event, MetricQuery.parse)
   const sql = query2sql(query, event)
-  return useWAE(event, sql)
+  const { data } = await useWAE(event, sql)
+  return { type: query.type, rows: data }
 })
