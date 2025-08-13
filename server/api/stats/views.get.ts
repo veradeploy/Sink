@@ -1,15 +1,16 @@
+// server/api/stats/views.get.ts
 import { eventHandler, type H3Event } from 'h3'
 import { z } from 'zod'
 import sqlbricks from 'sql-bricks'
 
 import { QuerySchema } from '@@/schemas/query'
-/// import { query2filter, appendTimeFilter, useWAE, getValidatedQuery } from '@/server/utils/...'
-import { logsMap } from '@/server/utils/access-log'
+// NOTE: helpers (getValidatedQuery, query2filter, appendTimeFilter, useWAE)
+// are assumed to exist in your project via utils/auto-imports.
 
 const { select } = sqlbricks
 
 const ViewsQuery = QuerySchema.extend({
-  unit: z.enum(['minute','hour','day']),
+  unit: z.enum(['minute', 'hour', 'day']),
   clientTimezone: z.string().optional()
 })
 type VQ = z.infer<typeof ViewsQuery>
@@ -23,16 +24,18 @@ function bucketExpr(unit: VQ['unit'], tz?: string) {
   }
 }
 
+const TABLE_NAME = 'sink'
+const SAMPLE_INTERVAL_COL = '_sample_interval' // present in your data
+
 function query2sql(query: VQ, _event: H3Event): string {
   const filter = query2filter(query)
-  const table = logsMap.table
   const tExpr = bucketExpr(query.unit, query.clientTimezone)
 
   const qb = select([
-      `${tExpr} AS t`,
-      `SUM(${logsMap.sampleInterval}) AS y`
-    ].join(', '))
-    .from(table)
+    `${tExpr} AS t`,
+    `SUM(${SAMPLE_INTERVAL_COL}) AS y`
+  ].join(', '))
+    .from(TABLE_NAME)
     .where(filter)
     .groupBy('t')
     .orderBy('t ASC')
