@@ -4,7 +4,7 @@ import sqlbricks from 'sql-bricks'
 
 import { QuerySchema } from '@@/schemas/query'
 /// import { query2filter, appendTimeFilter, useWAE, getValidatedQuery } from '@/server/utils/...'
-import { logsMap } from '@/server/utils/logsMap'
+import { logsMap } from '@/server/utils/access-log'
 
 const { select } = sqlbricks
 
