@@ -1,4 +1,5 @@
 import type { H3Event } from 'h3'
+import { getHeader, getRequestIP } from 'h3'
 import { parseAcceptLanguage } from 'intl-parse-accept-language'
 import { UAParser } from 'ua-parser-js'
 import {
@@ -18,12 +19,17 @@ function toBlobNumber(blob: string) {
   return +blob.replace(/\D/g, '')
 }
 
+/**
+ * IMPORTANT: This mapping matches your actual stored data:
+ * - blob2 is the external referer (e.g., reddit.com)  -> 'referer'
+ * - blob5 is the short-link URL you serve              -> 'url'
+ */
 export const blobsMap = {
   blob1: 'slug',
-  blob2: 'url',
+  blob2: 'referer',     // CHANGED: was 'url'
   blob3: 'ua',
   blob4: 'ip',
-  blob5: 'referer',
+  blob5: 'url',         // CHANGED: was 'referer'
   blob6: 'country',
   blob7: 'region',
   blob8: 'city',
@@ -93,31 +99,39 @@ export function doubles2logs(doubles: number[]) {
 }
 
 export function useAccessLog(event: H3Event) {
-  const ip = getHeader(event, 'cf-connecting-ip') || getHeader(event, 'x-real-ip') || getRequestIP(event, { xForwardedFor: true })
+  const ip =
+    getHeader(event, 'cf-connecting-ip') ||
+    getHeader(event, 'x-real-ip') ||
+    getRequestIP(event, { xForwardedFor: true })
 
+  // store only the host (cleaner grouping than full URL)
   const { host: referer } = parseURL(getHeader(event, 'referer'))
 
   const acceptLanguage = getHeader(event, 'accept-language') || ''
   const language = (parseAcceptLanguage(acceptLanguage) || [])[0]
 
   const userAgent = getHeader(event, 'user-agent') || ''
-  const uaInfo = (new UAParser(userAgent, {
+  const uaInfo = new UAParser(userAgent, {
     // eslint-disable-next-line ts/ban-ts-comment
     // @ts-expect-error
     browser: [Crawlers.browser || [], CLIs.browser || [], Emails.browser || [], Fetchers.browser || [], InApps.browser || [], MediaPlayers.browser || [], Vehicles.browser || []].flat(),
     // eslint-disable-next-line ts/ban-ts-comment
     // @ts-expect-error
     device: [ExtraDevices.device || []].flat(),
-  })).getResult()
+  }).getResult()
 
-  const { request: { cf } } = event.context.cloudflare
+  const cfCtx = event.context?.cloudflare
+  const { request: { cf } = { cf: undefined } } = cfCtx || ({} as any)
   const link = event.context.link || {}
 
-  const isBot = cf?.botManagement?.verifiedBot
-    || ['crawler', 'fetcher'].includes(uaInfo?.browser?.type || '')
-    || ['spider', 'bot'].includes(uaInfo?.browser?.name?.toLowerCase() || '')
+  const isBot =
+    cf?.botManagement?.verifiedBot ||
+    ['crawler', 'fetcher'].includes(uaInfo?.browser?.type || '') ||
+    ['spider', 'bot'].includes((uaInfo?.browser?.name || '').toLowerCase())
 
-  const { disableBotAccessLog } = useRuntimeConfig(event)
+  // useRuntimeConfig is globally available in Nuxt server; pass event for SSR context
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call
+  const { disableBotAccessLog } = useRuntimeConfig(event) as any
   if (isBot && disableBotAccessLog) {
     console.log('bot access log disabled:', userAgent)
     return Promise.resolve()
@@ -125,6 +139,7 @@ export function useAccessLog(event: H3Event) {
 
   const regionNames = new Intl.DisplayNames(['en'], { type: 'region' })
   const countryName = regionNames.of(cf?.country || 'WD') // fallback to "Worldwide"
+
   const accessLogs = {
     url: link.url,
     slug: link.slug,
@@ -149,6 +164,8 @@ export function useAccessLog(event: H3Event) {
   }
 
   if (process.env.NODE_ENV === 'production') {
+    // hubAnalytics is provided by the Nuxt Hub module at runtime
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call
     return hubAnalytics().put({
       indexes: [link.id], // only one index
       blobs: logs2blobs(accessLogs),
@@ -156,7 +173,13 @@ export function useAccessLog(event: H3Event) {
     })
   }
   else {
-    console.log('access logs:', accessLogs, logs2blobs(accessLogs), logs2doubles(accessLogs), { ...blobs2logs(logs2blobs(accessLogs)), ...doubles2logs(logs2doubles(accessLogs)) })
+    console.log(
+      'access logs:',
+      accessLogs,
+      logs2blobs(accessLogs),
+      logs2doubles(accessLogs),
+      { ...blobs2logs(logs2blobs(accessLogs)), ...doubles2logs(logs2doubles(accessLogs)) },
+    )
     return Promise.resolve()
   }
 }
