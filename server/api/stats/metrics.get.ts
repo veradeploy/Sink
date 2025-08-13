@@ -4,41 +4,36 @@ import { z } from 'zod'
 import sqlbricks from 'sql-bricks'
 
 import { QuerySchema } from '@@/schemas/query'
-import { logsMap } from '@/server/utils/access-log'
-
-// NOTE: helpers (getValidatedQuery, query2filter, appendTimeFilter, useWAE)
-// are assumed to exist in your project via utils/auto-imports.
+/// import { query2filter, appendTimeFilter, useWAE, getValidatedQuery } from '@/server/utils/...'
+import { logsMap } from '../../utils/logsMap'
 
 const { select } = sqlbricks
 
 const MetricQuery = QuerySchema.extend({
-  type: z.enum(['referer', 'device', 'language', 'country', 'os'])
+  type: z.enum(['referer', 'device', 'language', 'country', 'os']),
 })
 type MetricQ = z.infer<typeof MetricQuery>
 
-// Map metric type -> actual column in WAE (fallbacks included)
 function colFor(type: MetricQ['type']): string {
   switch (type) {
-    case 'referer':  return logsMap.referer || 'blob2'
-    case 'language': return logsMap.language || 'blob10'
-    case 'country':  return logsMap.country || 'blob6'
-    case 'os':       return logsMap.os || 'blob11'
-    case 'device':   return logsMap.deviceType || logsMap.device || logsMap.browser || 'blob12'
+    case 'referer': return logsMap.referer
+    case 'language': return logsMap.language
+    case 'country': return logsMap.country
+    case 'os': return logsMap.os
+    case 'device': return logsMap.browser // proxy for device
   }
 }
 
-const TABLE_NAME = 'sink'
-const SAMPLE_INTERVAL_COL = '_sample_interval' // present in your data
-
 function query2sql(query: MetricQ, _event: H3Event): string {
   const filter = query2filter(query)
+  const table = logsMap.table
   const col = colFor(query.type)
 
   const qb = select([
-    `COALESCE(${col}, '') AS value`,
-    `SUM(${SAMPLE_INTERVAL_COL}) AS count`
+    `${col} AS value`,
+    `SUM(${logsMap.sampleInterval}) AS count`,
   ].join(', '))
-    .from(TABLE_NAME)
+    .from(table)
     .where(filter)
     .groupBy('value')
     .orderBy('count DESC')
