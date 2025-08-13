@@ -1,34 +1,43 @@
+// server/api/stats/counters.get.ts
 import { eventHandler, type H3Event } from 'h3'
 import { z } from 'zod'
 import sqlbricks from 'sql-bricks'
 
 import { QuerySchema } from '@@/schemas/query'
-// import your own helpers:
-/// import { query2filter, appendTimeFilter, useWAE, getValidatedQuery } from '@/server/utils/...'
+
+// ✅ use the single source of truth (no more app/server/utils/logsMap)
 import { logsMap } from '@/server/utils/access-log'
 import { uniqueVisitorExpr } from '@/server/utils/visitors'
+
+// NOTE: The following helpers are assumed to be available in your project via utils/auto-imports:
+// - getValidatedQuery(event, QuerySchema.parse)
+// - query2filter(query)
+// - appendTimeFilter(qb, query)
+// - useWAE(event, sql)
 
 type Query = z.infer<typeof QuerySchema>
 const { select } = sqlbricks
 
+// Cloudflare Workers Analytics Engine (ClickHouse-like)
+const TABLE_NAME = 'sink'
+const SAMPLE_INTERVAL_COL = '_sample_interval' // present in your data
+
 function query2sql(query: Query, _event: H3Event): string {
   const filter = query2filter(query)
-  const table = logsMap.table
   const uniqVisitor = uniqueVisitorExpr()
 
-  const durationExpr = logsMap.durationMs
-    ? `SUM(${logsMap.durationMs}) AS duration`
-    : `0 AS duration` // no duration column in your data
+  // No duration column in your schema yet; keep 0 for now.
+  const durationExpr = `0 AS duration`
 
   const qb = select([
-      `SUM(${logsMap.sampleInterval}) AS views`,
-      `COUNT(DISTINCT ${uniqVisitor}) AS visitors`,
-      durationExpr
-    ].join(', '))
-    .from(table)
+    `SUM(${SAMPLE_INTERVAL_COL}) AS views`,
+    `COUNT(DISTINCT ${uniqVisitor}) AS visitors`,
+    durationExpr
+  ].join(', '))
+    .from(TABLE_NAME)
     .where(filter)
 
-  appendTimeFilter(qb, query) // your existing helper
+  appendTimeFilter(qb, query)
   return qb.toString()
 }
 
