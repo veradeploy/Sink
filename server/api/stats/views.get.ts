@@ -4,14 +4,14 @@ import { z } from 'zod'
 import sqlbricks from 'sql-bricks'
 
 import { QuerySchema } from '@@/schemas/query'
-// NOTE: helpers (getValidatedQuery, query2filter, appendTimeFilter, useWAE)
-// are assumed to exist in your project via utils/auto-imports.
+/// import { query2filter, appendTimeFilter, useWAE, getValidatedQuery } from '@/server/utils/...'
+import { logsMap } from '../../utils/logsMap'
 
 const { select } = sqlbricks
 
 const ViewsQuery = QuerySchema.extend({
   unit: z.enum(['minute', 'hour', 'day']),
-  clientTimezone: z.string().optional()
+  clientTimezone: z.string().optional(),
 })
 type VQ = z.infer<typeof ViewsQuery>
 
@@ -19,23 +19,21 @@ function bucketExpr(unit: VQ['unit'], tz?: string) {
   const ts = tz ? `toTimeZone(timestamp, '${tz}')` : 'timestamp'
   switch (unit) {
     case 'minute': return `toUnixTimestamp(toStartOfMinute(${ts}))`
-    case 'hour':   return `toUnixTimestamp(toStartOfHour(${ts}))`
-    case 'day':    return `toUnixTimestamp(toStartOfDay(${ts}))`
+    case 'hour': return `toUnixTimestamp(toStartOfHour(${ts}))`
+    case 'day': return `toUnixTimestamp(toStartOfDay(${ts}))`
   }
 }
 
-const TABLE_NAME = 'sink'
-const SAMPLE_INTERVAL_COL = '_sample_interval' // present in your data
-
 function query2sql(query: VQ, _event: H3Event): string {
   const filter = query2filter(query)
+  const table = logsMap.table
   const tExpr = bucketExpr(query.unit, query.clientTimezone)
 
   const qb = select([
     `${tExpr} AS t`,
-    `SUM(${SAMPLE_INTERVAL_COL}) AS y`
+    `SUM(${logsMap.sampleInterval}) AS y`,
   ].join(', '))
-    .from(TABLE_NAME)
+    .from(table)
     .where(filter)
     .groupBy('t')
     .orderBy('t ASC')
