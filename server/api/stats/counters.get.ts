@@ -5,7 +5,7 @@ import sqlbricks from 'sql-bricks'
 import { QuerySchema } from '@@/schemas/query'
 // import your own helpers:
 /// import { query2filter, appendTimeFilter, useWAE, getValidatedQuery } from '@/server/utils/...'
-import { logsMap } from '@/server/utils/logsMap'
+import { logsMap } from '@/server/utils/access-log'
 import { uniqueVisitorExpr } from '@/server/utils/visitors'
 
 type Query = z.infer<typeof QuerySchema>
