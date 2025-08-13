@@ -4,35 +4,29 @@ import { z } from 'zod'
 import sqlbricks from 'sql-bricks'
 
 import { QuerySchema } from '@@/schemas/query'
-// NOTE: helpers (getValidatedQuery, query2filter, appendTimeFilter, useWAE)
-// are assumed to exist in your project via utils/auto-imports.
+// import your own helpers:
+/// import { query2filter, appendTimeFilter, useWAE, getValidatedQuery } from '@/server/utils/...'
+import { logsMap } from '../../utils/logsMap'
+import { uniqueVisitorExpr } from '../../utils/visitors'
 
 type Query = z.infer<typeof QuerySchema>
 const { select } = sqlbricks
 
-// --- WAE schema constants (from your data) ---
-const TABLE_NAME = 'sink'
-const SAMPLE_INTERVAL_COL = '_sample_interval'
-// In your stored rows: blob4 = ip, blob3 = ua
-const IP_COL = 'blob4'
-const UA_COL = 'blob3'
-
-// Use IP+UA hash as a unique visitor key.
-// (If you later add sessionId/userId, switch to that here.)
-function uniqueVisitorExpr(): string {
-  return `toString(cityHash64(COALESCE(${IP_COL}, ''), COALESCE(${UA_COL}, '')))`
-}
-
 function query2sql(query: Query, _event: H3Event): string {
   const filter = query2filter(query)
+  const table = logsMap.table
   const uniqVisitor = uniqueVisitorExpr()
 
+  const durationExpr = logsMap.durationMs
+    ? `SUM(${logsMap.durationMs}) AS duration`
+    : `0 AS duration`
+
   const qb = select([
-    `SUM(${SAMPLE_INTERVAL_COL}) AS views`,
+    `SUM(${logsMap.sampleInterval}) AS views`,
     `COUNT(DISTINCT ${uniqVisitor}) AS visitors`,
-    `0 AS duration` // no duration column in your data
+    durationExpr,
   ].join(', '))
-    .from(TABLE_NAME)
+    .from(table)
     .where(filter)
 
   appendTimeFilter(qb, query)
