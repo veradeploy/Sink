@@ -4,35 +4,33 @@ import { z } from 'zod'
 import sqlbricks from 'sql-bricks'
 
 import { QuerySchema } from '@@/schemas/query'
-
-// ✅ use the single source of truth (no more app/server/utils/logsMap)
-import { logsMap } from '@/server/utils/access-log'
-import { uniqueVisitorExpr } from '@/server/utils/visitors'
-
-// NOTE: The following helpers are assumed to be available in your project via utils/auto-imports:
-// - getValidatedQuery(event, QuerySchema.parse)
-// - query2filter(query)
-// - appendTimeFilter(qb, query)
-// - useWAE(event, sql)
+// NOTE: helpers (getValidatedQuery, query2filter, appendTimeFilter, useWAE)
+// are assumed to exist in your project via utils/auto-imports.
 
 type Query = z.infer<typeof QuerySchema>
 const { select } = sqlbricks
 
-// Cloudflare Workers Analytics Engine (ClickHouse-like)
+// --- WAE schema constants (from your data) ---
 const TABLE_NAME = 'sink'
-const SAMPLE_INTERVAL_COL = '_sample_interval' // present in your data
+const SAMPLE_INTERVAL_COL = '_sample_interval'
+// In your stored rows: blob4 = ip, blob3 = ua
+const IP_COL = 'blob4'
+const UA_COL = 'blob3'
+
+// Use IP+UA hash as a unique visitor key.
+// (If you later add sessionId/userId, switch to that here.)
+function uniqueVisitorExpr(): string {
+  return `toString(cityHash64(COALESCE(${IP_COL}, ''), COALESCE(${UA_COL}, '')))`
+}
 
 function query2sql(query: Query, _event: H3Event): string {
   const filter = query2filter(query)
   const uniqVisitor = uniqueVisitorExpr()
 
-  // No duration column in your schema yet; keep 0 for now.
-  const durationExpr = `0 AS duration`
-
   const qb = select([
     `SUM(${SAMPLE_INTERVAL_COL}) AS views`,
     `COUNT(DISTINCT ${uniqVisitor}) AS visitors`,
-    durationExpr
+    `0 AS duration` // no duration column in your data
   ].join(', '))
     .from(TABLE_NAME)
     .where(filter)
