@@ -1,15 +1,16 @@
-import { logsMap } from './logsMap'
+// server/utils/visitors.ts
 
-// WAE supports ClickHouse funcs like cityHash64
-export function uniqueVisitorExpr() {
-  if (logsMap.sessionId) return `COALESCE(${logsMap.sessionId}, '')`
-  if (logsMap.userId)    return `COALESCE(${logsMap.userId}, '')`
+// Your WAE columns (from the sample row you shared):
+// - blob4 = ip
+// - blob3 = ua
+export const IP_COL = 'blob4'
+export const UA_COL = 'blob3'
 
-  // Best-effort: hash IP + UA to avoid merging everyone behind the same IP
-  if (logsMap.ip && logsMap.userAgent) {
-    return `toString(cityHash64(COALESCE(${logsMap.ip}, ''), COALESCE(${logsMap.userAgent}, '')))`
-  }
-  if (logsMap.ip)        return `COALESCE(${logsMap.ip}, '')`
-  if (logsMap.userAgent) return `toString(cityHash64(COALESCE(${logsMap.userAgent}, '')))`
-  return `'unknown'`
+/**
+ * Unique visitor expression for ClickHouse/WA:
+ * hashes IP + UA, returns a stable string key per visitor.
+ * Swap to your own session/user id anytime.
+ */
+export function uniqueVisitorExpr(): string {
+  return `toString(cityHash64(COALESCE(${IP_COL}, ''), COALESCE(${UA_COL}, '')))`
 }
